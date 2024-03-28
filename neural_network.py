@@ -64,14 +64,16 @@ def load_data_large():
     return (X_train, y_train, X_val, y_val)
 
 
+
 def linearForward(input, p):
     """
     :param input: input vector (column vector) WITH bias feature added
     :param p: parameter matrix (alpha/beta) WITH bias parameter added
     :return: output vector
     """
-    assert input.shape[0] == p.shape[1]
     output = np.dot(p, input)
+    if output.ndim == 1:
+        output = output.reshape(-1, 1)
     return output
 
 
@@ -79,15 +81,17 @@ def sigmoidForward(a):
     """
     :param a: input vector WITH bias feature added
     """
-    sigmoid_output = 1 / (1 + np.exp(-a))
-    return sigmoid_output
+    output = 1 / (1 + np.exp(-a))
+    if output.ndim == 1:
+        output = output.reshape(-1, 1)
+    return output
 
 
 def softmaxForward(b):
     """
     :param b: input vector WITH bias feature added
     """
-    e_b = np.exp(b - np.max(b, axis=0))
+    e_b = np.exp(b - np.max(b, axis=0, keepdims=True))
     return e_b / np.sum(e_b, axis=0, keepdims=True)
 
 
@@ -97,46 +101,48 @@ def crossEntropyForward(hot_y, y_hat):
     :param y_hat: vector of probabilistic distribution for predicted label
     :return: float
     """
-    return -np.sum(hot_y * np.log(y_hat + 1e-9)) / hot_y.shape[1]
-
+    y_hat = np.clip(y_hat, 1e-9, 1 - 1e-9)
+    cross_entropy = -np.sum(hot_y * np.log(y_hat))  # Removed normalization by number of classes
+    return cross_entropy
 
 def NNForward(x, y, alpha, beta):
     """
-    Assumes biases are already included in `x` and does not add them again.
-    :param x: input data WITH bias feature already added.
-    :param y: input (true) labels.
-    :param alpha: alpha matrix WITH bias parameter included.
-    :param beta: beta matrix WITH bias parameter included.
-    :return: Intermediate steps and cross-entropy loss.
+    :param x: input data (column vector) WITH bias feature added
+    :param y: input (true) labels
+    :param alpha: alpha WITH bias parameter added
+    :param beta: alpha WITH bias parameter added
+    :return: all intermediate quantities x, a, z, b, y, J #refer to writeup for details
+    TIP: Check on your dimensions. Did you make sure all bias features are added?
     """
-    # Ensure x is 2D
-    #x = np.atleast_2d(x)
-    
-    # One-hot encoding of y
-    y_one_hot = np.zeros((beta.shape[0],))
-    y_one_hot[y] = 1
+    #  Convert y to one-hot encoding
+    # a = # Apply linear transformation
+    # z = # Apply sigmoid activation
 
-    # Apply linear transformation (first layer)
-    a = linearForward(x, alpha)
+    # Add bias term to hidden layer output before passing to output layer
+    # z_with_bias
 
-    # Apply sigmoid activation (hidden layer output)
-    z = sigmoidForward(a)
-    
-    # Add the bias term to z. Since the shape of beta is (10,4), and the first column of beta
-    # represents the weights for the bias term, we add a row of ones to z to account for the bias.
-    z_with_bias = np.vstack((np.ones((1, z.shape[1])), z))
-    
-    # Apply linear transformation (second layer)
-    b = linearForward(z_with_bias, beta)
-
-    # Apply softmax to get probabilities (output layer)
-    y_hat = softmaxForward(b)
+    # b = # Forward Pass through output layer using linearForward with augmented z
+    # y_hat = # Apply softmax to get probabilities
 
     # Compute the cross-entropy loss
+    # J = 
+    
+    # return x, a, z_with_bias, b, y_hat, J
+    if np.ndim(y) == 0:
+        y_one_hot = np.zeros((beta.shape[0], 1))
+        y_one_hot[y] = 1
+    else:
+        y_one_hot = y
+
+    a = linearForward(x, alpha)
+    z = sigmoidForward(a)
+    z_with_bias = np.vstack((np.ones((1, z.shape[1])), z))  # Add bias term
+    b = linearForward(z_with_bias, beta)
+    y_hat = softmaxForward(b)
     J = crossEntropyForward(y_one_hot, y_hat)
 
-    # Return all intermediate quantities and the loss
     return x, a, z_with_bias, b, y_hat, J
+
 
 
 def softmaxBackward(hot_y, y_hat):
@@ -144,43 +150,68 @@ def softmaxBackward(hot_y, y_hat):
     :param hot_y: 1-hot vector for true label
     :param y_hat: vector of probabilistic distribution for predicted label
     """
-    output = y_hat - hot_y
-    return output
+    return y_hat - hot_y
 
 
 def linearBackward(prev, p, grad_curr):
     """
-    Compute the gradient w.r.t. the parameters of a linear layer.
-    :param prev: activations from the previous layer (with bias added as the first row).
-    :param p: weights of the current layer (with bias weights as the first column).
-    :param grad_curr: gradient of the loss w.r.t. the current layer's output.
-    :return: 
-        - grad_param: gradient of the loss w.r.t. the current layer's weights.
-        - grad_prev: gradient of the loss w.r.t. the previous layer's output.
+    :param prev: previous layer WITH bias feature
+    :param p: parameter matrix (alpha/beta) WITH bias parameter
+    :param grad_curr: gradients for current layer
+    :return:
+        - grad_param: gradients for parameter matrix (alpha/beta)
+        - grad_prevl: gradients for previous layer
+    TIP: Check your dimensions.
     """
     grad_param = np.dot(grad_curr, prev.T)
     # Exclude the bias gradient from the previous layer
     grad_prev = np.dot(p[:, 1:].T, grad_curr)
     return grad_param, grad_prev
 
+
 def sigmoidBackward(curr, grad_curr):
     """
-    Compute the gradient w.r.t. the input of the sigmoid function.
-    :param curr: output of the sigmoid function.
-    :param grad_curr: gradient of the loss w.r.t. the current layer's output.
-    :return: grad_prev: gradient of the loss w.r.t. the sigmoid input.
+    :param curr: current layer WITH bias feature
+    :param grad_curr: gradients for current layer
+    :return: grad_prevl: gradients for previous layer
+    TIP: Check your dimensions
     """
-    # Note: curr should not include the bias.
     sigmoid_derivative = curr * (1 - curr)
-    grad_prev = sigmoid_derivative * grad_curr
+    grad_prev = grad_curr * sigmoid_derivative
     return grad_prev
+
 
 def NNBackward(x, y, alpha, beta, z, y_hat):
     """
-    Perform the backward pass.
+    :param x: input data (column vector) WITH bias feature added
+    :param y: input (true) labels
+    :param alpha: alpha WITH bias parameter added
+    :param beta: alpha WITH bias parameter added
+    :param z: z as per writeup
+    :param y_hat: vector of probabilistic distribution for predicted label
+    :return:
+        - grad_alpha: gradients for alpha
+        - grad_beta: gradients for beta
+        - g_b: gradients for layer b (softmaxBackward)
+        - g_z: gradients for layer z (linearBackward)
+        - g_a: gradients for layer a (sigmoidBackward)
     """
-    # One-hot encoding for y
+    # Convert y to one-hot encoding
+    # y_one_hot =
     
+    # Gradient of Cross Entropy Loss w.r.t. y_hat
+    # g_y_hat =
+    
+    # Gradient of Loss w.r.t. beta (Weights from hidden to output layer)
+    # grad_beta, g_b = 
+    
+    # Gradient of Loss w.r.t. activation before sigmoid (a)
+    # g_a =
+    
+    # Gradient of Loss w.r.t. alpha (Weights from input to hidden layer)
+    # grad_alpha, g_x =
+    
+    # return grad_alpha, grad_beta, g_y_hat, g_b_no_bias, g_a
     y_one_hot = np.zeros_like(y_hat)
     y_one_hot[y, np.arange(y_hat.shape[1])] = 1
     
@@ -200,75 +231,88 @@ def NNBackward(x, y, alpha, beta, z, y_hat):
     
     return grad_alpha, grad_beta, g_b, g_z, g_a
 
-
-def initialize_weights(input_size, output_size, init_flag):
-    if init_flag:
-        # Initialize weights to random values in Uniform[-0.1, 0.1]
-        weights = np.random.uniform(-0.1, 0.1, (output_size, input_size))
-    else:
-        # Initialize weights to zeros
-        weights = np.zeros((output_size, input_size))
-    # Initialize bias to zero
-    bias = np.zeros((output_size, 1))
-    return np.hstack((bias, weights))
-
 def SGD(tr_x, tr_y, valid_x, valid_y, hidden_units, num_epoch, init_flag, learning_rate):
-    """
-    Train a neural network using stochastic gradient descent.
-    """
-    # Initialize weights
-    alpha = initialize_weights(tr_x.shape[1] + 1, hidden_units, init_flag)
-    beta = initialize_weights(hidden_units + 1, len(np.unique(tr_y)), init_flag)
+    N_train, M = tr_x.shape
+    num_classes = len(np.unique(tr_y))
+    
+    # Add a column of ones to the training and validation data to account for the input bias term
+    tr_x = np.hstack((tr_x, np.ones((N_train, 1))))
+    valid_x = np.hstack((valid_x, np.ones((valid_x.shape[0], 1))))
+    M += 1  # Adjust for the input bias term
 
-    train_entropy = []  # List to store training cross-entropy loss per epoch
-    valid_entropy = []  # List to store validation cross-entropy loss per epoch
+    # Initialize weights
+    if init_flag:
+        alpha = np.random.uniform(-0.1, 0.1, (hidden_units, M))
+    else:
+        alpha = np.zeros((hidden_units, M))
+    # Initialize beta with an additional bias unit for the hidden layer
+    if init_flag:
+        beta = np.random.uniform(-0.1, 0.1, (num_classes, hidden_units + 1))
+    else:
+        beta = np.zeros((num_classes, hidden_units + 1))
+
+    train_entropy = []
+    valid_entropy = []
 
     for epoch in range(num_epoch):
-        # Variables to accumulate loss over the epoch
-        epoch_train_loss = 0
-        epoch_valid_loss = 0
-        
-        # Loop over each training example
-        for i in range(tr_x.shape[0]):
+        epoch_train_losses = []
+
+        for i in range(N_train):
+            x = tr_x[i, :][None, :]  # Include bias input
+
+            y = np.zeros((num_classes, 1))
+            y[tr_y[i], 0] = 1  # One-hot encoding
+
             # Forward pass
-            # NNForward should return the activation 'a', the output 'z', the predicted 'y_hat', and the loss 'J'
-            x, y = tr_x[i, :], tr_y[i]
-            a, z, y_hat, J = NNForward(x, y, alpha, beta)
-            epoch_train_loss += J  # Accumulate loss
-            
-            # Backward pass to compute gradients
-            grad_alpha, grad_beta = NNBackward(x, y, alpha, beta, z, y_hat)
-            
-            # Update parameters
-            alpha -= learning_rate * grad_alpha
-            beta -= learning_rate * grad_beta
-        
-        # Store the mean training loss for this epoch
-        train_entropy.append(epoch_train_loss / tr_x.shape[0])
-        
-        # Forward pass on the entire validation set to compute validation loss
+            z = np.dot(alpha, x.T)
+            a = 1 / (1 + np.exp(-z))  # Sigmoid activation
+            a_bias = np.vstack((a, np.ones((1, 1))))  # Add bias unit for hidden layer output
+            o = np.dot(beta, a_bias)
+            y_hat = np.exp(o) / np.sum(np.exp(o), axis=0)  # Softmax
+
+            # Compute loss
+            loss = -np.sum(y * np.log(y_hat))
+            epoch_train_losses.append(loss)
+
+            # Backward pass
+            d_o = y_hat - y
+            d_beta = np.dot(d_o, a_bias.T)
+
+            d_a = np.dot(beta[:, :-1].T, d_o)  # Exclude bias weight
+            d_z = d_a * a * (1 - a)
+            d_alpha = np.dot(d_z, x)
+
+            # Update weights
+            beta -= learning_rate * d_beta
+            alpha -= learning_rate * d_alpha
+
+        # Calculate mean loss for the epoch
+        train_entropy.append(np.mean(epoch_train_losses))
+
+        # Validation phase
+        epoch_valid_losses = []
         for i in range(valid_x.shape[0]):
-            x, y = valid_x[i, :], valid_y[i]
-            _, _, _, J_val = NNForward(x, y, alpha, beta)
-            epoch_valid_loss += J_val
-        
-        # Store the mean validation loss for this epoch
-        valid_entropy.append(epoch_valid_loss / valid_x.shape[0])
-        
+            x = valid_x[i, :][None, :]  # Include bias input
+
+            y = np.zeros((num_classes, 1))
+            y[valid_y[i], 0] = 1  # One-hot encoding
+
+            # Forward pass
+            z = np.dot(alpha, x.T)
+            a = 1 / (1 + np.exp(-z))
+            a_bias = np.vstack((a, np.ones((1, 1))))  # Add bias unit for hidden layer output
+            o = np.dot(beta, a_bias)
+            y_hat = np.exp(o) / np.sum(np.exp(o), axis=0)
+
+            # Compute loss
+            loss = -np.sum(y * np.log(y_hat))
+            epoch_valid_losses.append(loss)
+
+        # Calculate mean validation loss for the epoch
+        valid_entropy.append(np.mean(epoch_valid_losses))
+
     return alpha, beta, train_entropy, valid_entropy
 
-# Helper functions NNForward, NNBackward, and initialize_weights need to be defined
-
-
-# Helper function to initialize weights
-def initialize_weights(input_dim, output_dim, init_flag):
-    if init_flag:
-        # Initialize weights to random values in Uniform[-0.1, 0.1]
-        weights = np.random.uniform(-0.1, 0.1, (output_dim, input_dim + 1))  # +1 for the bias term
-    else:
-        # Initialize weights to zeros
-        weights = np.zeros((output_dim, input_dim + 1))  # +1 for the bias term
-    return weights
 
 def prediction(tr_x, tr_y, valid_x, valid_y, tr_alpha, tr_beta):
     """
@@ -315,51 +359,86 @@ def prediction(tr_x, tr_y, valid_x, valid_y, tr_alpha, tr_beta):
 
 ### FEEL FREE TO WRITE ANY HELPER FUNCTIONS
 
+
 def train_and_valid(X_train, y_train, X_val, y_val, num_epoch, num_hidden, init_rand, learning_rate):
-    """ Main function to train and validate your neural network implementation.
-
-        X_train: Training input in N_train-x-M numpy nd array. Each value is binary, in {0,1}.
-        y_train: Training labels in N_train-x-1 numpy nd array. Each value is in {0,1,...,K-1},
-            where K is the number of classes.
-        X_val: Validation input in N_val-x-M numpy nd array. Each value is binary, in {0,1}.
-        y_val: Validation labels in N_val-x-1 numpy nd array. Each value is in {0,1,...,K-1},
-            where K is the number of classes.
-        num_epoch: Positive integer representing the number of epochs to train (i.e. number of
-            loops through the training data).
-        num_hidden: Positive integer representing the number of hidden units.
-        init_flag: Boolean value of True/False
-        - True: Initialize weights to random values in Uniform[-0.1, 0.1], bias to 0
-        - False: Initialize weights and bias to 0
-        learning_rate: Float value specifying the learning rate for SGD.
-
-        RETURNS: a tuple of the following six objects, in order:
-        loss_per_epoch_train (length num_epochs): A list of float values containing the mean cross entropy on training data after each SGD epoch
-        loss_per_epoch_val (length num_epochs): A list of float values containing the mean cross entropy on validation data after each SGD epoch
-        err_train: Float value containing the training error after training (equivalent to 1.0 - accuracy rate)
-        err_val: Float value containing the validation error after training (equivalent to 1.0 - accuracy rate)
-        y_hat_train: A list of integers representing the predicted labels for training data
-        y_hat_val: A list of integers representing the predicted labels for validation data
-    """
-    ### YOUR CODE HERE
-
-    alpha = initialize_weights(X_train.shape[1] + 1, num_hidden, init_rand)
-    beta = initialize_weights(num_hidden + 1, len(np.unique(y_train)), init_rand)
-
-    train_entropy = []
-    valid_entropy = []
+    N_train, M = X_train.shape
+    num_classes = len(np.unique(np.concatenate((y_train, y_val))))
+    
+    # Initialize weights and biases
+    W1, b1 = initialize_params(M, num_hidden, init_rand)
+    W2, b2 = initialize_params(num_hidden, num_classes, init_rand)
+    
+    # Placeholder for the return values
+    metrics = {
+        'loss_per_epoch_train': [],
+        'loss_per_epoch_val': [],
+        'y_hat_train': [],
+        'y_hat_val': [],
+        'err_train': 0,
+        'err_val': 0
+    }
 
     for epoch in range(num_epoch):
-        for i in range(X_train.shape[0]):
-            # Forward and backward passes
-            # Update weights (alpha, beta)
-            # This part requires implementations of NNForward, NNBackward, and weight update logic
-            pass  # Implement the logic as per SGD function
+        update_params(X_train, y_train, W1, b1, W2, b2, learning_rate, num_classes)
+        update_metrics(X_train, y_train, W1, b1, W2, b2, metrics, 'train')
+        update_metrics(X_val, y_val, W1, b1, W2, b2, metrics, 'val')
 
-        # After each epoch, compute and store the mean cross-entropy over the entire training and validation sets
-        # This requires a full pass of forward propagation for all training and validation examples
+    return (
+        metrics['loss_per_epoch_train'], 
+        metrics['loss_per_epoch_val'], 
+        metrics['err_train'], 
+        metrics['err_val'], 
+        metrics['y_hat_train'], 
+        metrics['y_hat_val']
+    )
 
-    # After training, use the prediction function to get predictions and error rates
-    train_error, valid_error, y_hat_train, y_hat_valid = prediction(X_train, y_train, X_val, y_val, alpha, beta)
+def initialize_params(n_in, n_out, init_rand):
+    if init_rand:
+        return (np.random.uniform(-0.1, 0.1, (n_out, n_in)), np.zeros(n_out))
+    else:
+        return (np.zeros((n_out, n_in)), np.zeros(n_out))
 
-    # Return the required information
-    return train_entropy, valid_entropy, train_error, valid_error, y_hat_train, y_hat_valid
+def forward_backward_pass(x, y, W1, b1, W2, b2, num_classes):
+    # Forward pass
+    z1 = np.dot(W1, x) + b1
+    a1 = 1 / (1 + np.exp(-z1))
+    z2 = np.dot(W2, a1) + b2
+    a2 = np.exp(z2 - np.max(z2))
+    y_hat = a2 / np.sum(a2)
+    
+    # Backward pass
+    y_true = np.zeros(num_classes)
+    y_true[y] = 1
+    d2 = y_hat - y_true
+    dW2 = np.outer(d2, a1)
+    db2 = d2
+    da1 = np.dot(W2.T, d2)
+    dz1 = da1 * a1 * (1 - a1)
+    dW1 = np.outer(dz1, x)
+    db1 = dz1
+    
+    return dW1, db1, dW2, db2, y_hat
+
+def update_params(X, y, W1, b1, W2, b2, learning_rate, num_classes):
+    for i in range(X.shape[0]):
+        dW1, db1, dW2, db2, _ = forward_backward_pass(X[i], y[i], W1, b1, W2, b2, num_classes)
+        W1 -= learning_rate * dW1
+        b1 -= learning_rate * db1
+        W2 -= learning_rate * dW2
+        b2 -= learning_rate * db2
+
+def update_metrics(X, y, W1, b1, W2, b2, metrics, dataset_type):
+    loss = 0
+    correct_preds = 0
+    predictions = []
+    for i in range(X.shape[0]):
+        _, _, _, _, y_hat = forward_backward_pass(X[i], y[i], W1, b1, W2, b2, len(np.unique(y)))
+        predictions.append(np.argmax(y_hat))
+        loss += -np.log(y_hat[y[i]])
+        correct_preds += y[i] == predictions[-1]
+    
+    loss /= X.shape[0]
+    error = 1 - correct_preds / X.shape[0]
+    metrics[f'loss_per_epoch_{dataset_type}'].append(loss)
+    metrics[f'y_hat_{dataset_type}'] = predictions
+    metrics[f'err_{dataset_type}'] = error
